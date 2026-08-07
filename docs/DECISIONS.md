@@ -14,3 +14,13 @@
 - **Hypothesis model:** WLS of log(rent) on building size (ref 5+ units), bedrooms, rooms, decade built, PUMA and year, using household weights and HC1 standard errors. Robustness checks: unweighted, PUMA-clustered SE, and gross rent. Result: 3-4 unit buildings rent at -15.3% (95% CI -21.2% to -9.0%).
 - **Timing mismatch:** HUD SAFMR and ACS are newer than the listings. They are used only as relative neighborhood signals. ZORI and mortgage rates are matched to the listing month.
 
+## Phase 3: Baseline and validation
+
+- **Test set:** the newest 20% of listings by `listed_at` (758 listings, 2019-09-18 to 2019-12-26). The cutoff is the date boundary closest to 20%, so listings with the same timestamp never straddle it. Train and test assignments are saved in `data/processed/splits.parquet`, and every later phase reads that file instead of re-splitting.
+- **Spatial CV:** KMeans on the unique map points, projected to UTM meters and weighted by listings per point, with 40 clusters. GroupKFold deals the clusters into 5 folds. KMeans uses only coordinates, never rent, so it is fit on all points and test listings get a cluster label for per-region reporting later.
+- **Why 40 clusters, not 20:** with 20 clusters, one downtown cluster held 19% of training listings and became a fold by itself. Fold MAE then ranged from $236 to $503, and the CV mean was really "can you predict downtown from the suburbs?". With 40 clusters the folds are equal-sized (20% each) and each spans city and suburbs. The fold SD halved. Clusters are about 3 km in radius, which is larger than the ~1 km precision of the listing coordinates. The choice was made on balance (largest-cluster share, fold sizes), not on which setting gave the lowest MAE. Shuffled fold assignment was also tried: it produced unequal folds (15-28%) and no better balance, so it was rejected.
+- **Main baseline:** median rent by ZIP x bedrooms, falling back to the bedroom median and then the global median. Two simpler baselines (global median, bedroom median) give context.
+- **Evaluation:** MAE is the headline metric (in dollars, readable), with MAPE and median absolute error alongside. Test MAE gets a 95% bootstrap CI (2,000 resamples) so the Phase 4 "20% below baseline" claim can be checked against noise.
+- **Which CV score counts:** spatial CV is the score for all tuning and model selection from Phase 4 on. Random CV is reported only to show the leak ($227 vs $314 for the ZIP baseline).
+- **MLflow:** tracking points at the local `mlflow.db` (SQLite), so runs log without a server. `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001` reads the same file. Experiment: `rent-model`.
+
