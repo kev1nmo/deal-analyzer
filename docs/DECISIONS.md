@@ -24,3 +24,16 @@
 - **Which CV score counts:** spatial CV is the score for all tuning and model selection from Phase 4 on. Random CV is reported only to show the leak ($227 vs $314 for the ZIP baseline).
 - **MLflow:** tracking points at the local `mlflow.db` (SQLite), so runs log without a server. `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001` reads the same file. Experiment: `rent-model`.
 
+## Phase 4: Rent model
+
+- **Target:** both models predict log(rent) and convert back with exp. Rent is right-skewed and errors scale with price, so log makes the problem closer to symmetric. exp of a log prediction is a median-type estimate, which suits MAE.
+- **Features (46, in 6 groups):** size, location (coordinates, distances, county one-hots, `coarse_location`), neighborhood (tract and ZIP ACS, HUD SAFMR), market (ZORI with metro fallback plus a missing flag, 30-year mortgage rate), listing (12 amenity flags, amenity count, pets, photo level) and nearby rent.
+- **Nearby rent instead of raw rent per sq ft:** rent per sq ft is computed from the target, so it can't be a feature directly. `NeighborRentPerSqft` takes a listing-weighted average of median log rent per sq ft at the k nearest *training* map points. During training it skips the listing's own point, so a listing never sees its own rent or same-point near-copies. At prediction time it uses all training points, including the same point when one exists. It sits inside the sklearn pipeline, so CV refits it on each training fold. k is tuned (Ridge best 12, XGBoost best 8).
+- **Missing values:** Ridge uses median imputation plus missing-indicator columns, fitted inside the pipeline. XGBoost handles NaN natively.
+- **Search:** Ridge grid of alpha (1 to 30,000) x k. The first grid stopped at 1,000, which was also the best value, so the grid was widened until the optimum sat inside it. XGBoost: 60 Optuna TPE trials (seed 42) over objective (absolute or squared error), trees, learning rate, depth, child weight, subsampling and L1/L2 penalties. Every trial is a nested MLflow run.
+- **Selection rule:** lowest spatial CV MAE. The test set was evaluated once, after the choice. Both models' test scores are reported, but only the CV winner is registered.
+- **Significance of the gain:** a paired bootstrap resamples the same test listings for model and baseline, giving a CI on the % MAE reduction. XGBoost: 30.1% (25.3% to 34.7%).
+- **Regions:** counties (Fulton, DeKalb, Cobb, Gwinnett, Clayton, Other). They are readable for a report, unlike the 40 CV clusters. Price bands: < $1,000, $1,000-1,299, $1,300-1,599, $1,600+, based on actual rent.
+- **Model registry:** the winner is registered as `rent-model` with skops serialization, the MLflow 3 default. Only the five classes the pipeline needs are listed as trusted, instead of falling back to pickle.
+- **Environment:** XGBoost on macOS needs OpenMP, which is installed into the conda env (`conda install -c conda-forge llvm-openmp`) rather than system-wide.
+
