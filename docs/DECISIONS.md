@@ -37,3 +37,12 @@
 - **Model registry:** the winner is registered as `rent-model` with skops serialization, the MLflow 3 default. Only the five classes the pipeline needs are listed as trusted, instead of falling back to pickle.
 - **Environment:** XGBoost on macOS needs OpenMP, which is installed into the conda env (`conda install -c conda-forge llvm-openmp`) rather than system-wide.
 
+## Phase 5: Text feature (PyTorch)
+
+- **Text instead of photos:** the photo links are from 2019, and labeling about 1K photos by hand is costly. Fine-tuning a pretrained text model on listing descriptions keeps the deep learning part (PyTorch fine-tuning) without manual labels.
+- **Number masking:** every number in the title and description is replaced with `[num]`. 15% of descriptions contain the exact rent.
+- **Model:** `sentence-transformers/all-MiniLM-L6-v2` (22M params) with mean pooling and a linear head, predicting log(rent per sq ft). The settings were fixed up front, not tuned: 3 epochs, encoder lr 3e-5, head lr 1e-3, Huber loss, 160 tokens. About 85 s per fit on Apple MPS.
+- **Stacking without leakage:** each training listing's score comes from a model fit on the other 4 spatial folds. Test scores come from a model fit on all training data. Scores are cached in `data/processed/text_scores.parquet`, and `--retrain` refits them.
+- **Process isolation:** PyTorch and XGBoost each bundle their own OpenMP runtime, and loading both in one process segfaults on macOS. `src/text_scores.py` (PyTorch) runs as a subprocess, and `src/phase5.py` (XGBoost) never imports torch.
+- **Outcome:** the text model was not adopted. CV MAE improved $233 → $207, but test MAE did not ($155 → $157, CI -4.8% to +2.2%). The likely reason is that text stands in for location knowledge, which spatial CV removes but the test set mostly has. The CV figure also carries a small second-order stacking leak. Full reasoning: `reports/phase5_findings.md` §5.
+
