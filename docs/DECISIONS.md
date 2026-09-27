@@ -46,3 +46,12 @@
 - **Process isolation:** PyTorch and XGBoost each bundle their own OpenMP runtime, and loading both in one process segfaults on macOS. `src/text_scores.py` (PyTorch) runs as a subprocess, and `src/phase5.py` (XGBoost) never imports torch.
 - **Outcome:** the text model was not adopted. CV MAE improved $233 → $207, but test MAE did not ($155 → $157, CI -4.8% to +2.2%). The likely reason is that text stands in for location knowledge, which spatial CV removes but the test set mostly has. The CV figure also carries a small second-order stacking leak. Full reasoning: `reports/phase5_findings.md` §5.
 
+## Phase 6: Ranges, drivers, comps
+
+- **Conformal method:** MAPIE `CrossConformalRegressor` (CV+) on log(rent), so ranges are multiplicative and widen with price. Point predictions come from the model refit on all training data.
+- **Location-aware calibration:** calibrating only on spatial folds over-covered the test set (87%, width $621), because it prepares for new neighborhoods while 88% of test listings are at known points. `analyze()` uses random-fold calibration for known map points and spatial-fold calibration for new ones. The rule follows from the deployment setting, not from tuning on test. Test coverage: 78.9% (target 80%), median width $475.
+- **Per-county (Mondrian) calibration was tried and rejected:** it moved Fulton from 65% to 72% but dropped Gwinnett to 70% and overall to 76%. Fulton's shortfall comes from the late-2019 in-town price shift (a break in exchangeability), not from interval width. This is a documented limitation for Phase 10 drift monitoring. The code stays in `RentAnalyzer` (`mode="mondrian"`) for comparison.
+- **SHAP:** TreeExplainer on the XGBoost step, applied to the pipeline-transformed features. Values are on the log scale, so they are reported as % effects (exp(phi) - 1). A test checks that the SHAP values add up to the prediction.
+- **Comps:** 5 nearest training listings in a weighted space: km east/north (weight 1), log sq ft (4), bedrooms (1.5), bathrooms (1). Location dominates, and size breaks ties.
+- **Artifact:** the fitted `RentAnalyzer` is saved to `models/rent_analyzer.joblib` (git-ignored) for the Phase 9 API.
+
