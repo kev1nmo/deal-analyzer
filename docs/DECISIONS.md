@@ -55,3 +55,21 @@
 - **Comps:** 5 nearest training listings in a weighted space: km east/north (weight 1), log sq ft (4), bedrooms (1.5), bathrooms (1). Location dominates, and size breaks ties.
 - **Artifact:** the fitted `RentAnalyzer` is saved to `models/rent_analyzer.joblib` (git-ignored) for the Phase 9 API.
 
+## Phase 7: Rent-growth forecast
+
+- **Target:** 12-month log growth of ZORI per ZIP, forecast quarterly from Dec 2021 to Dec 2023 (forecast windows cover 2022-2024). Only ZIPs with 36+ months of *unbroken* history are scored. Each forecast sees data up to its origin only, and CPI rent is lagged a month for its release delay.
+- **SARIMA:** one (1,1,1)x(0,1,1,12) model per ZIP on log rent, fixed up front. Stationarity and invertibility are enforced: without them, 13 of 856 fits exploded.
+- **XGBoost:** one global model on lag features. It trains only on rows whose 12-month target was already observed at the origin. A test checks this by poisoning later targets.
+- **Shipped = XGBoost, after comparing three options on two tests** (2022-24 MAE / share of ZIPs inside the 80% band in the 2019 backtest): no-change 3.09 pp / 2%, XGBoost 5.41 / 44%, auto-select 6.98 / 44%. No-change wins only in flat markets. Auto-select (`method="auto"`: best of no-change, persistence and XGBoost on the prior 2 years) lagged the 2022 turn. XGBoost is the only option that holds up in both regimes, and auto-select picks it in Dec 2018 and today anyway.
+- **Later years:** an AR(1) fit to annual Atlanta CPI rent (complete years since 1998, up to `as_of`), so the long-run mean is not a ZORI boom-era number. Year-1 uncertainty comes from the forecaster's own errors in the 2 years before `as_of`.
+
+## Phase 8: Monte Carlo deal simulation
+
+- **Annual steps, vectorized over paths:** all drivers are drawn as (paths x years) arrays first, then one cash-flow function runs on them. The same function is reused with actual 2019-2024 drivers for the backtest.
+- **Rent level:** a lognormal fitted so its 10th/90th percentiles equal the conformal 80% range. The 2019 rent prediction is rolled to the deal date with the ZIP's ZORI.
+- **Vacancy and inflation:** AR(1) on 30 years of annual US rental vacancy and US CPI (added `CPIAUCSL` to the FRED pull). FRED has no Atlanta vacancy series.
+- **Rates:** the loan is fixed-rate, so the rate path (a random walk with annual sd from FRED) only affects the exit: exit cap = entry cap + 0.5 x rate change.
+- **FHA:** 3.5% down, 1.75% upfront MIP financed, 0.55% annual MIP on the balance for the life of the loan, the owner occupies one unit in year 1, and the self-sufficiency test (75% of all units' rent >= PITI, 3-4 units). **Conventional:** 25% down, +0.75 pp investor rate.
+- **Prices are assumptions** ($165k/unit today, $120k/unit in 2019): there is no licensed sales dataset.
+- **IRR:** vectorized bisection on NPV (NaN if no sign change), tested against SciPy `brentq`.
+
