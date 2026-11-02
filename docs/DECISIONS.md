@@ -73,3 +73,20 @@
 - **Prices are assumptions** ($165k/unit today, $120k/unit in 2019): there is no licensed sales dataset.
 - **IRR:** vectorized bisection on NPV (NaN if no sign change), tested against SciPy `brentq`.
 
+## Phase 9: API + Postgres
+
+- **Inputs are what a buyer knows:** lat/lon, beds, baths, sq ft, amenities, pets. `src/api/features.py` rebuilds all 46 model features by reusing the Phase 2 code (`add_spatial_features`, the DuckDB `FEATURES_SQL`, `add_base_features`). A test rebuilds 300 training listings from raw columns and checks the features match the stored ones exactly, so there is no training/serving skew.
+- **Input domain = training domain:** pydantic rejects points outside the market box, >4 beds, sq ft outside 250-3,500 and <220 sq ft per bedroom (the Phase 2 cleaning rules), and unknown amenities (HTTP 422).
+- **Dates:** the model only knows 2019 prices, so it predicts at Dec 2019 and rolls forward with the ZIP's ZORI (metro fallback) to the latest month, as in Phase 8. Both numbers are returned.
+- **`/simulate`:** predicts the unit, builds a `Deal`, and runs the Phase 8 simulation for FHA and conventional loans on shared drivers. Growth forecasts are computed once at startup; markets are cached per ZIP.
+- **Logging:** every request is stored in Postgres (`predictions` with the request, the model feature vector, the result, latency and model version = first 12 characters of the artifact's SHA-256; `simulations` with the full result). Phase 10 drift monitoring reads this table. SQLAlchemy Core + generic JSON, so tests run on SQLite and Docker runs on Postgres.
+- **Container:** the image holds only code and pinned dependencies (`requirements-api.txt`, same versions as the training env so the joblib artifact loads). `models/` and `data/raw/` are mounted read-only, so a retrained model ships without rebuilding the image.
+
+## Phase 10: Monitoring and retraining
+
+- **Actuals:** real rents come in through `POST /actuals` into `rent_actuals`, linked one-to-one to the prediction they score. Each row stores `observed_month`, so the drift SQL is plain `GROUP BY` and runs unchanged on Postgres and SQLite (tests).
+- **Drift rule:** per month and model version, with at least 30 actuals: MAE above 1.25 x the champion's reference MAE ($155, its Phase 4 test MAE), or 80%-range coverage below 70% (about 2.5 standard errors under 80% at n = 100). Both the error level and the range honesty are watched, because a model can keep its MAE while its ranges stop being trustworthy.
+- **Drill instead of waiting for real drift:** there are no post-2019 rents for these listings, so `src/phase10.py` replays the Phase 3 test set (Sep and Dec 2019) through the production analyzer as tagged traffic (`source = replay`), plus a copy where every actual rent is raised 15%. Drill models are registered as `rent-model-drill-*` and written to `models/drill/`, so production is never touched.
+- **Champion/challenger:** the newest 30% of labeled rows (by date) form the recent holdout; the challenger is refit with the champion's hyperparameters on the original training data plus the older 70%. Promotion needs a lower holdout MAE *and* a 95% paired-bootstrap CI for the gain that is above zero. Registry aliases `champion` / `challenger` track roles; promotion archives the old artifact and swaps `models/rent_analyzer.joblib`.
+- **Result:** real replay: no drift (Sep MAE $147, coverage 79%; Dec $189, 79%), and a forced retrain did not win (gain -0.8%, CI -3.8% to +2.1%), so the champion stayed. Shock: both months flagged (Sep MAE $235, coverage 63%), and the challenger won (MAE $278 -> $243, gain 12.5%, CI 9.8% to 15.5%) and was promoted. Its coverage only rose from 68% to 72%: the conformal residuals still come mostly from pre-shock data, so after a level shift the ranges stay too narrow until enough new data accumulates.
+

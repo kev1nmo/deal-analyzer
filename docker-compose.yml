@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: deals
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deals}
+      POSTGRES_DB: deals
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deals -d deals"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://deals:${POSTGRES_PASSWORD:-deals}@db:5432/deals
+    volumes:
+      - ./models:/app/models:ro
+      - ./data/raw:/app/data/raw:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
