@@ -90,3 +90,12 @@
 - **Champion/challenger:** the newest 30% of labeled rows (by date) form the recent holdout; the challenger is refit with the champion's hyperparameters on the original training data plus the older 70%. Promotion needs a lower holdout MAE *and* a 95% paired-bootstrap CI for the gain that is above zero. Registry aliases `champion` / `challenger` track roles; promotion archives the old artifact and swaps `models/rent_analyzer.joblib`.
 - **Result:** real replay: no drift (Sep MAE $147, coverage 79%; Dec $189, 79%), and a forced retrain did not win (gain -0.8%, CI -3.8% to +2.1%), so the champion stayed. Shock: both months flagged (Sep MAE $235, coverage 63%), and the challenger won (MAE $278 -> $243, gain 12.5%, CI 9.8% to 15.5%) and was promoted. Its coverage only rose from 68% to 72%: the conformal residuals still come mostly from pre-shock data, so after a level shift the ranges stay too narrow until enough new data accumulates.
 
+## Phase 11: Break-evens, report, demo
+
+- **One engine:** break-evens and the tornado reuse the Phase 8 `simulate()` cash-flow function on a single deterministic path, so they can't disagree with the Monte Carlo.
+- **Tornado ranges come from the simulation:** each market input moves to its own p10/p90 across the 10,000 simulated paths (averaged over the hold), with everything else at the median. Hand-picked +/-10% swings would make every input look equally uncertain. Deal terms (mortgage rate +/-1 pp, price +/-10%) are choices, so they get fixed swings.
+- **Root-finding:** a 41-point grid scan finds the sign change nearest today's value, then SciPy `brentq` refines it. If there is no sign change, the answer is "never" (e.g. FHA year-1 cash flow is negative at any vacancy). If losses exceed the down payment, IRR has no root and is scored -100%, so the solver still sees the crossing.
+- **Narrow vacancy and inflation ranges are a data limitation:** they come from national AR(1) fits, so the tornado understates them. The break-evens show the distance to failure instead (vacancy would need to reach 20%).
+- **Report:** `reports/findings.qmd` holds the measured numbers from every phase plus a model card. It renders to self-contained HTML (git-ignored) and to `findings.md`, which GitHub displays.
+- **Demo:** the Streamlit app only calls the API (`/predict`, `/simulate`, `/breakeven`) and runs as its own small container (`Dockerfile.demo`). A headless `streamlit.testing` run of all three example properties against the Docker API passed with no errors.
+
