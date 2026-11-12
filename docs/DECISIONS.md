@@ -99,3 +99,11 @@
 - **Report:** `reports/findings.qmd` holds the measured numbers from every phase plus a model card. It renders to self-contained HTML (git-ignored) and to `findings.md`, which GitHub displays.
 - **Demo:** the Streamlit app only calls the API (`/predict`, `/simulate`, `/breakeven`) and runs as its own small container (`Dockerfile.demo`). A headless `streamlit.testing` run of all three example properties against the Docker API passed with no errors.
 
+## Live demo (Streamlit Community Cloud)
+
+- **Hosting choice:** Hugging Face now requires a paid plan for Docker Spaces, so the demo runs on Streamlit Community Cloud (free, redeploys on every push to `main`). Entry point `app/streamlit_app.py`, dependencies `app/requirements.txt` (the pinned API + demo requirements), `packages.txt` (libgomp for XGBoost), Python 3.11.
+- **Same API, no second server:** when `API_URL` is not set, the app starts the FastAPI app inside its own process (`fastapi.testclient.TestClient`, lifespan included) and calls the same endpoints. Docker Compose sets `API_URL=http://api:8000`, so locally the demo still goes over HTTP to the separate API + Postgres. One code path for both, so the website and the local stack cannot disagree.
+- **Artifacts:** GitHub holds code only. The model and ~4 MB of serving data live in the public Hugging Face repo `kev1nmo/deal-analyzer-artifacts`, downloaded on first start if missing. After a retrain, `python deploy/publish_artifacts.py` uploads them, then reboot the app.
+- **Fits the free tier:** a fresh clone (no model or data) downloaded the artifacts and ran all three examples end to end at about 580 MB peak memory (limit ~1 GB).
+- **Address input:** the free U.S. Census geocoder turns an address into coordinates (no API key). Out-of-area addresses get a plain-language message.
+- **Attribution:** Zillow research data is free for public use with clear attribution, which the app footer and the artifacts card provide.
